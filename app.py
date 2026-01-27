@@ -60,6 +60,20 @@ def init_db():
         """)
 init_db()
 
+def restore_running_campaigns():
+    """启动时恢复所有运行中的campaigns"""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT id, account_email, interval_minutes FROM campaigns WHERE status='running'").fetchall()
+        for row in rows:
+            if row['account_email']:
+                scheduler.add_job(process_campaign, 'interval', minutes=row['interval_minutes'] or 5,
+                                  args=[row['id'], row['account_email']], id=f"campaign_{row['id']}", replace_existing=True)
+                print(f"[Restored] Campaign {row['id']} with interval {row['interval_minutes']}min")
+
+# 延迟恢复，等scheduler启动完成
+scheduler.add_job(restore_running_campaigns, 'date', id='restore_on_start')
+
 @contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH)
