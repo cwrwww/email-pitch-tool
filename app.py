@@ -132,9 +132,42 @@ def get_templates(cid: int):
         rows = conn.execute("SELECT * FROM templates WHERE campaign_id=? ORDER BY step", (cid,)).fetchall()
         return [dict(r) for r in rows]
 
+@app.put("/api/templates/{tid}")
+def update_template(tid: int, step: int = Form(...), subject: str = Form(...), body: str = Form(...), delay_days: int = Form(0)):
+    with get_db() as conn:
+        conn.execute("UPDATE templates SET step=?, subject=?, body=?, delay_days=? WHERE id=?",
+                    (step, subject, body, delay_days, tid))
+        conn.commit()
+    return {"ok": True}
+
+@app.delete("/api/templates/{tid}")
+def delete_template(tid: int):
+    with get_db() as conn:
+        conn.execute("DELETE FROM templates WHERE id=?", (tid,))
+        conn.commit()
+    return {"ok": True}
+
+@app.get("/api/campaigns/{cid}/variables")
+def get_campaign_variables(cid: int):
+    """提取campaign所有模板中使用的变量"""
+    import re
+    variables = set()
+    with get_db() as conn:
+        rows = conn.execute("SELECT subject, body FROM templates WHERE campaign_id=?", (cid,)).fetchall()
+        for row in rows:
+            # 匹配 {{var}} 或 {{var|default}}
+            for text in [row['subject'], row['body']]:
+                if text:
+                    matches = re.findall(r'\{\{(\w+)(?:\|[^}]*)?\}\}', text)
+                    variables.update(matches)
+    # email是必须的，不需要提示
+    variables.discard('email')
+    return {"variables": sorted(variables)}
+
 @app.post("/api/campaigns/{cid}/leads")
-async def upload_leads(cid: int, file: UploadFile = File(...)):
+async def upload_leads(cid: int, file: UploadFile = File(...), defaults: str = Form("{}")):
     content = await file.read()
+    default_values = json.loads(defaults)
     rows = []
 
     if file.filename.endswith('.csv'):
@@ -162,7 +195,8 @@ async def upload_leads(cid: int, file: UploadFile = File(...)):
                 validate_email(email)
                 if email in blacklist or email in existing:
                     skipped += 1; continue
-                data = {k: v for k, v in row.items() if k != 'email'}
+                # 合并默认值和行数据
+                data = {**default_values, **{k: v for k, v in row.items() if k != 'email'}}
                 conn.execute("INSERT INTO leads(campaign_id, email, data) VALUES(?,?,?)",
                             (cid, email, json.dumps(data, default=str)))
                 added += 1

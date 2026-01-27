@@ -38,6 +38,57 @@
         .help { font-size: 12px; color: #888; margin-top: 5px; }
         .msg { padding: 10px; background: #d4edda; color: #155724; border-radius: 4px; margin-bottom: 15px; }
         #preview { background: #f8f9fa; padding: 15px; border-radius: 4px; margin-top: 10px; }
+
+        /* 抖动动画 */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-5px); }
+            40%, 80% { transform: translateX(5px); }
+        }
+        .shake { animation: shake 0.4s ease-in-out; border-color: #e74c3c !important; }
+
+        /* 数字输入框美化 */
+        .num-input {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+        }
+        .num-input input {
+            width: 80px; text-align: center; margin: 0;
+        }
+        .num-input button {
+            width: 32px; height: 32px; padding: 0; font-size: 18px; line-height: 1;
+        }
+        .num-input span { color: #666; font-size: 14px; }
+
+        /* Toast 提示 */
+        .toast {
+            position: fixed; top: 20px; right: 20px; padding: 15px 25px;
+            border-radius: 8px; color: white; font-size: 14px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 9999;
+            animation: slideIn 0.3s ease;
+        }
+        .toast.success { background: #27ae60; }
+        .toast.error { background: #e74c3c; }
+        .toast.warning { background: #f39c12; }
+        .toast.info { background: #3498db; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        /* 确认弹窗美化 */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); display: flex;
+            align-items: center; justify-content: center; z-index: 1000;
+        }
+        .modal-box {
+            background: white; padding: 25px; border-radius: 12px;
+            max-width: 400px; width: 90%; box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .modal-box h3 { margin: 0 0 15px; color: #333; }
+        .modal-box p { color: #666; margin-bottom: 20px; }
+        .modal-box .btn-group { display: flex; gap: 10px; justify-content: flex-end; }
+        .modal-box button { min-width: 80px; }
     </style>
 </head>
 <body>
@@ -80,35 +131,66 @@
 
             <div id="tab-templates">
                 <h3 style="margin:15px 0">添加邮件模板</h3>
-                <label>步骤序号</label>
-                <input type="number" id="tplStep" value="1" min="1">
-                <label>邮件主题 (支持变量如 {{first_name}})</label>
-                <input type="text" id="tplSubject" placeholder="Hi {{first_name}}, quick question">
-                <label>邮件内容 (HTML格式)</label>
-                <textarea id="tplBody" placeholder="<p>Hi {{first_name}},</p><p>I noticed...</p>"></textarea>
-                <label>等待天数 (发送此步骤前等待)</label>
-                <input type="number" id="tplDelay" value="0" min="0">
-                <button onclick="addTemplate()">添加模板</button>
-                <p class="help">变量默认值: {{name|there}} - 如果name为空则显示there</p>
+                <div class="grid">
+                    <div>
+                        <label>步骤序号</label>
+                        <div class="num-input">
+                            <button type="button" onclick="adjustNum('tplStep', -1)">−</button>
+                            <input type="number" id="tplStep" value="1" min="1">
+                            <button type="button" onclick="adjustNum('tplStep', 1)">+</button>
+                            <span>第几封邮件</span>
+                        </div>
+                        <label>邮件主题 (支持变量如 {{first_name}})</label>
+                        <input type="text" id="tplSubject" placeholder="Hi {{first_name}}, quick question" oninput="updatePreview()">
+                        <label>邮件内容 (HTML格式)</label>
+                        <textarea id="tplBody" placeholder="<p>Hi {{first_name}},</p><p>I noticed...</p>" oninput="updatePreview()"></textarea>
+                        <label>等待天数 (发送此步骤前等待)</label>
+                        <div class="num-input">
+                            <button type="button" onclick="adjustNum('tplDelay', -1)">−</button>
+                            <input type="number" id="tplDelay" value="0" min="0">
+                            <button type="button" onclick="adjustNum('tplDelay', 1)">+</button>
+                            <span>天后发送</span>
+                        </div>
+                        <div style="margin-top:15px">
+                            <button id="tplSubmitBtn" onclick="addTemplate()">添加模板</button>
+                            <button id="tplCancelBtn" onclick="resetTemplateForm()" style="display:none;background:#ccc">取消编辑</button>
+                        </div>
+                        <p class="help">变量默认值: {{name|there}} - 如果name为空则显示there</p>
+                    </div>
+                    <div>
+                        <label>实时预览 (示例数据)</label>
+                        <div style="background:#fff;border:1px solid #ddd;border-radius:4px;padding:15px;min-height:200px">
+                            <div style="color:#666;font-size:12px;margin-bottom:10px">
+                                <strong>主题:</strong> <span id="previewSubject">-</span>
+                            </div>
+                            <hr style="border:none;border-top:1px solid #eee;margin:10px 0">
+                            <div id="previewBody" style="font-size:14px">输入内容后显示预览...</div>
+                        </div>
+                        <p class="help" style="margin-top:10px">预览使用示例数据: first_name=John, company=Acme Inc, title=CEO</p>
+                    </div>
+                </div>
 
                 <h3 style="margin:20px 0 10px">已添加模板</h3>
                 <div id="templateList"></div>
             </div>
 
             <div id="tab-leads" style="display:none">
+                <div id="requiredVarsBox" style="background:#e8f4fd;padding:15px;border-radius:4px;margin-bottom:15px;display:none">
+                    <strong>模板需要的变量:</strong> <span id="requiredVarsList"></span>
+                    <p class="help" style="margin-top:5px">导入的数据需要包含这些列，缺失时需要设置默认值</p>
+                </div>
+
                 <div class="grid">
                     <div>
                         <h3 style="margin:15px 0">手动添加</h3>
                         <input type="email" id="manualEmail" placeholder="邮箱 *">
-                        <input type="text" id="manualFirstName" placeholder="first_name">
-                        <input type="text" id="manualLastName" placeholder="last_name">
-                        <input type="text" id="manualCompany" placeholder="company">
+                        <div id="manualFieldsBox"></div>
                         <button onclick="addManualLead()">添加</button>
                     </div>
                     <div>
                         <h3 style="margin:15px 0">上传文件</h3>
                         <input type="file" id="leadsFile" accept=".csv,.xlsx,.xls">
-                        <button onclick="uploadLeads()">上传CSV/Excel</button>
+                        <button onclick="checkAndUploadLeads()">上传CSV/Excel</button>
                     </div>
                 </div>
 
@@ -117,7 +199,7 @@
                 <textarea id="pasteArea" placeholder="email	first_name	company
 john@example.com	John	Acme Inc
 jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></textarea>
-                <button onclick="parsePastedData()">解析粘贴数据</button>
+                <button onclick="checkAndParsePasted()">解析粘贴数据</button>
 
                 <h3 style="margin:20px 0 10px">收件人列表 <span id="leadsCount" style="font-weight:normal;color:#888"></span></h3>
                 <table>
@@ -154,10 +236,74 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
 
     <script>
         let currentCampaign = null;
+        let requiredVariables = [];  // 模板需要的变量
+
+        // Toast 提示
+        function toast(msg, type = 'info', duration = 3000) {
+            const t = document.createElement('div');
+            t.className = 'toast ' + type;
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), duration);
+        }
+
+        // 确认弹窗
+        function showConfirm(title, message) {
+            return new Promise(resolve => {
+                const html = `
+                    <div class="modal-overlay" id="confirmModal">
+                        <div class="modal-box">
+                            <h3>${title}</h3>
+                            <p>${message}</p>
+                            <div class="btn-group">
+                                <button onclick="document.getElementById('confirmModal').remove();window._confirmResolve(false)" style="background:#ccc">取消</button>
+                                <button onclick="document.getElementById('confirmModal').remove();window._confirmResolve(true)">确定</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', html);
+                window._confirmResolve = resolve;
+            });
+        }
+
+        // 数字输入调整
+        function adjustNum(id, delta) {
+            const input = document.getElementById(id);
+            const min = parseInt(input.min) || 0;
+            const val = Math.max(min, parseInt(input.value || 0) + delta);
+            input.value = val;
+        }
+
+        // 抖动效果
+        function shakeElement(el) {
+            el.classList.add('shake');
+            setTimeout(() => el.classList.remove('shake'), 400);
+        }
 
         async function api(url, opts = {}) {
             const res = await fetch(url, opts);
             return res.json();
+        }
+
+        async function loadRequiredVariables() {
+            const res = await api(`/api/campaigns/${currentCampaign}/variables`);
+            requiredVariables = res.variables || [];
+
+            const box = document.getElementById('requiredVarsBox');
+            if (requiredVariables.length > 0) {
+                box.style.display = 'block';
+                document.getElementById('requiredVarsList').innerHTML =
+                    requiredVariables.map(v => `<code style="background:#fff;padding:2px 6px;border-radius:3px;margin:0 3px">{{${v}}}</code>`).join('');
+
+                // 动态生成手动添加的输入框
+                document.getElementById('manualFieldsBox').innerHTML =
+                    requiredVariables.map(v => `<input type="text" id="manual_${v}" placeholder="${v}">`).join('');
+            } else {
+                box.style.display = 'none';
+                document.getElementById('manualFieldsBox').innerHTML =
+                    '<input type="text" id="manual_first_name" placeholder="first_name"><input type="text" id="manual_company" placeholder="company">';
+            }
         }
 
         async function loadAccounts() {
@@ -183,7 +329,7 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
 
         async function createCampaign() {
             const name = document.getElementById('campaignName').value;
-            if (!name) return alert('请输入名称');
+            if (!name) return toast('请输入名称', 'error');
             const fd = new FormData();
             fd.append('name', name);
             await api('/api/campaigns', { method: 'POST', body: fd });
@@ -200,6 +346,7 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
             loadLeads();
             loadStats();
             loadCampaignSettings();
+            loadRequiredVariables();
         }
 
         async function loadCampaignSettings() {
@@ -212,6 +359,41 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
             }
         }
 
+        function showDefaultsModal(missingVars, callback) {
+            const html = `
+                <div class="modal-overlay" id="defaultsModal">
+                    <div class="modal-box" style="max-width:450px">
+                        <h3>设置缺失变量的默认值</h3>
+                        <p>导入的数据缺少以下变量，请设置默认值（留空则该变量为空）：</p>
+                        ${missingVars.map(v => `
+                            <label style="display:block;margin-bottom:5px;margin-top:10px">${v}</label>
+                            <input type="text" id="default_${v}" placeholder="输入默认值...">
+                        `).join('')}
+                        <div class="btn-group" style="margin-top:20px">
+                            <button onclick="document.getElementById('defaultsModal').remove()" style="background:#ccc">取消</button>
+                            <button onclick="confirmDefaults()">确认导入</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', html);
+            window.pendingImportCallback = callback;
+        }
+
+        function confirmDefaults() {
+            const defaults = {};
+            requiredVariables.forEach(v => {
+                const input = document.getElementById('default_' + v);
+                if (input && input.value) {
+                    defaults[v] = input.value;
+                }
+            });
+            document.getElementById('defaultsModal').remove();
+            if (window.pendingImportCallback) {
+                window.pendingImportCallback(defaults);
+            }
+        }
+
         function showTab(name) {
             document.querySelectorAll('[id^="tab-"]').forEach(el => el.style.display = 'none');
             document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
@@ -219,34 +401,152 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
             event.target.classList.add('active');
         }
 
+        // 示例数据用于预览
+        const sampleData = {
+            first_name: 'John',
+            last_name: 'Doe',
+            company: 'Acme Inc',
+            title: 'CEO',
+            email: 'john@example.com'
+        };
+
+        function updatePreview() {
+            const subject = document.getElementById('tplSubject').value;
+            const body = document.getElementById('tplBody').value;
+
+            // 简单的变量替换 (支持 {{var}} 和 {{var|default}})
+            function replaceVars(text) {
+                return text.replace(/\{\{(\w+)(?:\|([^}]*))?\}\}/g, (match, key, defaultVal) => {
+                    return sampleData[key] || defaultVal || match;
+                });
+            }
+
+            document.getElementById('previewSubject').textContent = replaceVars(subject) || '-';
+            document.getElementById('previewBody').innerHTML = replaceVars(body) || '输入内容后显示预览...';
+        }
+
         async function addTemplate() {
+            const subjectEl = document.getElementById('tplSubject');
+            const bodyEl = document.getElementById('tplBody');
+            const subject = subjectEl.value.trim();
+            const body = bodyEl.value.trim();
+
+            // 验证
+            let valid = true;
+            if (!subject) { shakeElement(subjectEl); valid = false; }
+            if (!body) { shakeElement(bodyEl); valid = false; }
+            if (!valid) {
+                toast('请填写邮件主题和内容', 'error');
+                return;
+            }
+
             const fd = new FormData();
             fd.append('step', document.getElementById('tplStep').value);
-            fd.append('subject', document.getElementById('tplSubject').value);
-            fd.append('body', document.getElementById('tplBody').value);
+            fd.append('subject', subject);
+            fd.append('body', body);
             fd.append('delay_days', document.getElementById('tplDelay').value);
             await api(`/api/campaigns/${currentCampaign}/templates`, { method: 'POST', body: fd });
+            toast('模板添加成功', 'success');
             loadTemplates();
+            // 清空表单
+            document.getElementById('tplSubject').value = '';
+            document.getElementById('tplBody').value = '';
+            updatePreview();
         }
 
         async function loadTemplates() {
             const templates = await api(`/api/campaigns/${currentCampaign}/templates`);
             document.getElementById('templateList').innerHTML = templates.map(t => `
-                <div style="background:#f8f9fa;padding:10px;margin-bottom:10px;border-radius:4px">
+                <div style="background:#f8f9fa;padding:10px;margin-bottom:10px;border-radius:4px;position:relative">
+                    <div style="position:absolute;right:10px;top:10px">
+                        <button class="btn-sm" onclick="editTemplate(${t.id}, ${t.step}, '${encodeURIComponent(t.subject)}', '${encodeURIComponent(t.body)}', ${t.delay_days})">编辑</button>
+                        <button class="btn-sm danger" onclick="deleteTemplate(${t.id})">删除</button>
+                    </div>
                     <strong>Step ${t.step}</strong> (等待${t.delay_days}天) <br>
                     主题: ${t.subject}<br>
                     <small style="color:#666">${t.body.substring(0, 100)}...</small>
                 </div>
             `).join('') || '<p style="color:#888">暂无模板</p>';
+            loadRequiredVariables();  // 模板变化后刷新变量
         }
 
-        async function uploadLeads() {
+        async function deleteTemplate(tid) {
+            const confirmed = await showConfirm('删除模板', '确定要删除此模板吗？');
+            if (!confirmed) return;
+            await fetch(`/api/templates/${tid}`, { method: 'DELETE' });
+            toast('模板已删除', 'success');
+            loadTemplates();
+        }
+
+        let editingTemplateId = null;
+
+        function editTemplate(tid, step, subject, body, delay) {
+            editingTemplateId = tid;
+            document.getElementById('tplStep').value = step;
+            document.getElementById('tplSubject').value = decodeURIComponent(subject);
+            document.getElementById('tplBody').value = decodeURIComponent(body);
+            document.getElementById('tplDelay').value = delay;
+            updatePreview();
+
+            // 更改按钮
+            const btn = document.getElementById('tplSubmitBtn');
+            btn.textContent = '保存修改';
+            btn.setAttribute('onclick', 'saveTemplateEdit()');
+            document.getElementById('tplCancelBtn').style.display = 'inline-block';
+        }
+
+        async function saveTemplateEdit() {
+            const fd = new FormData();
+            fd.append('step', document.getElementById('tplStep').value);
+            fd.append('subject', document.getElementById('tplSubject').value);
+            fd.append('body', document.getElementById('tplBody').value);
+            fd.append('delay_days', document.getElementById('tplDelay').value);
+            await fetch(`/api/templates/${editingTemplateId}`, { method: 'PUT', body: fd });
+
+            // 恢复按钮
+            resetTemplateForm();
+            loadTemplates();
+        }
+
+        function resetTemplateForm() {
+            editingTemplateId = null;
+            document.getElementById('tplStep').value = '1';
+            document.getElementById('tplSubject').value = '';
+            document.getElementById('tplBody').value = '';
+            document.getElementById('tplDelay').value = '0';
+            const btn = document.getElementById('tplSubmitBtn');
+            btn.textContent = '添加模板';
+            btn.setAttribute('onclick', 'addTemplate()');
+            document.getElementById('tplCancelBtn').style.display = 'none';
+            updatePreview();
+        }
+
+        async function checkAndUploadLeads() {
             const file = document.getElementById('leadsFile').files[0];
-            if (!file) return alert('请选择文件');
+            if (!file) return toast('请选择文件', 'error');
+
+            // 先读取文件检查列名
+            const text = await file.text();
+            const firstLine = text.split('\n')[0];
+            const delimiter = firstLine.includes('\t') ? '\t' : ',';
+            const columns = firstLine.split(delimiter).map(c => c.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+
+            const missingVars = requiredVariables.filter(v => !columns.includes(v.toLowerCase()));
+
+            if (missingVars.length > 0) {
+                showDefaultsModal(missingVars, (defaults) => doUploadLeads(file, defaults));
+            } else {
+                doUploadLeads(file, {});
+            }
+        }
+
+        async function doUploadLeads(file, defaults) {
             const fd = new FormData();
             fd.append('file', file);
+            fd.append('defaults', JSON.stringify(defaults));
             const res = await api(`/api/campaigns/${currentCampaign}/leads`, { method: 'POST', body: fd });
-            alert(`导入成功: ${res.added}条, 跳过: ${res.skipped}条`);
+            toast(`导入成功: ${res.added}条, 跳过: ${res.skipped}条`, 'success');
+            document.getElementById('leadsFile').value = '';
             loadLeads();
         }
 
@@ -268,52 +568,68 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
 
         async function addManualLead() {
             const email = document.getElementById('manualEmail').value.trim();
-            if (!email) return alert('请输入邮箱');
-            const data = [{
-                email,
-                first_name: document.getElementById('manualFirstName').value.trim(),
-                last_name: document.getElementById('manualLastName').value.trim(),
-                company: document.getElementById('manualCompany').value.trim()
-            }];
+            if (!email) return toast('请输入邮箱', 'error');
+            const data = { email };
+
+            // 收集所有变量字段
+            requiredVariables.forEach(v => {
+                const input = document.getElementById('manual_' + v);
+                if (input) data[v] = input.value.trim();
+            });
+
             const res = await fetch(`/api/campaigns/${currentCampaign}/leads/json`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: JSON.stringify([data])
             }).then(r => r.json());
             if (res.added > 0) {
                 document.getElementById('manualEmail').value = '';
-                document.getElementById('manualFirstName').value = '';
-                document.getElementById('manualLastName').value = '';
-                document.getElementById('manualCompany').value = '';
+                requiredVariables.forEach(v => {
+                    const input = document.getElementById('manual_' + v);
+                    if (input) input.value = '';
+                });
                 loadLeads();
             } else {
                 const errMsg = res.errors && res.errors.length > 0 ? res.errors.join('\n') : '未知错误';
-                alert('添加失败:\n' + errMsg);
+                toast('添加失败: ' + errMsg, 'error');
             }
         }
 
-        async function parsePastedData() {
+        async function checkAndParsePasted() {
             const text = document.getElementById('pasteArea').value.trim();
-            if (!text) return alert('请粘贴数据');
+            if (!text) return toast('请粘贴数据', 'error');
 
             const lines = text.split('\n').filter(l => l.trim());
-            if (lines.length < 2) return alert('至少需要表头+1行数据');
+            if (lines.length < 2) return toast('至少需要表头+1行数据', 'error');
 
-            // 解析表头（支持Tab或逗号分隔）
             const delimiter = lines[0].includes('\t') ? '\t' : ',';
             const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
 
-            if (!headers.includes('email')) return alert('必须包含email列');
+            if (!headers.includes('email')) return toast('必须包含email列', 'error');
+
+            const missingVars = requiredVariables.filter(v => !headers.includes(v.toLowerCase()));
+
+            if (missingVars.length > 0) {
+                showDefaultsModal(missingVars, (defaults) => doParsePasted(text, defaults));
+            } else {
+                doParsePasted(text, {});
+            }
+        }
+
+        async function doParsePasted(text, defaults) {
+            const lines = text.split('\n').filter(l => l.trim());
+            const delimiter = lines[0].includes('\t') ? '\t' : ',';
+            const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
 
             const data = [];
             for (let i = 1; i < lines.length; i++) {
                 const values = lines[i].split(delimiter);
-                const row = {};
+                const row = { ...defaults };  // 先填入默认值
                 headers.forEach((h, idx) => row[h] = (values[idx] || '').trim());
                 if (row.email) data.push(row);
             }
 
-            if (data.length === 0) return alert('没有有效数据');
+            if (data.length === 0) return toast('没有有效数据', 'error');
 
             const res = await fetch(`/api/campaigns/${currentCampaign}/leads/json`, {
                 method: 'POST',
@@ -325,7 +641,7 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
             if (res.errors && res.errors.length > 0) {
                 msg += '\n\n跳过原因:\n' + res.errors.join('\n');
             }
-            alert(msg);
+            toast(msg, res.errors && res.errors.length > 0 ? 'warning' : 'success', 5000);
             if (res.added > 0) document.getElementById('pasteArea').value = '';
             loadLeads();
         }
@@ -361,7 +677,7 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
 
         async function checkRepliesNow() {
             const res = await api(`/api/campaigns/${currentCampaign}/check-replies`, { method: 'POST' });
-            alert(res.msg || '检查完成');
+            toast(res.msg || '检查完成', 'success');
             loadStats();
             loadLeads();
         }
@@ -371,13 +687,13 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
             fd.append('account_email', document.getElementById('sendAccount').value);
             fd.append('interval_minutes', document.getElementById('sendInterval').value);
             const res = await api(`/api/campaigns/${currentCampaign}/launch`, { method: 'POST', body: fd });
-            alert(res.msg || '已启动');
+            toast(res.msg || '已启动', 'success');
             loadCampaigns();
         }
 
         async function stopCampaign() {
             await api(`/api/campaigns/${currentCampaign}/stop`, { method: 'POST' });
-            alert('已暂停');
+            toast('已暂停', 'info');
             loadCampaigns();
         }
 
