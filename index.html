@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Pitch Tool</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { margin-bottom: 20px; color: #333; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .card h2 { margin-bottom: 15px; font-size: 18px; color: #444; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        input, textarea, select, button { padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        input, textarea, select { width: 100%; margin-bottom: 10px; }
+        textarea { min-height: 120px; font-family: monospace; }
+        button { background: #4A90D9; color: white; border: none; cursor: pointer; }
+        button:hover { background: #357ABD; }
+        button.danger { background: #e74c3c; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        .status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+        .status.running { background: #27ae60; color: white; }
+        .status.draft { background: #95a5a6; color: white; }
+        .status.paused { background: #f39c12; color: white; }
+        .status.replied { background: #9b59b6; color: white; }
+        .status.completed { background: #3498db; color: white; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; }
+        .stats { display: flex; gap: 20px; flex-wrap: wrap; }
+        .stat { text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 100px; }
+        .stat .num { font-size: 24px; font-weight: bold; color: #4A90D9; }
+        .stat .label { font-size: 12px; color: #666; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 15px; }
+        .tab { padding: 8px 16px; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab.active { border-bottom-color: #4A90D9; color: #4A90D9; }
+        .help { font-size: 12px; color: #888; margin-top: 5px; }
+        .msg { padding: 10px; background: #d4edda; color: #155724; border-radius: 4px; margin-bottom: 15px; }
+        #preview { background: #f8f9fa; padding: 15px; border-radius: 4px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Email Pitch Tool</h1>
+
+        <div id="msg"></div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>Gmail 账号</h2>
+                <div id="accounts"></div>
+                <button onclick="location.href='/oauth/start'">+ 绑定Gmail账号</button>
+            </div>
+
+            <div class="card">
+                <h2>新建 Campaign</h2>
+                <input type="text" id="campaignName" placeholder="Campaign名称">
+                <button onclick="createCampaign()">创建</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Campaigns</h2>
+            <table>
+                <thead><tr><th>ID</th><th>名称</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="campaigns"></tbody>
+            </table>
+        </div>
+
+        <div class="card" id="campaignDetail" style="display:none">
+            <h2>Campaign 详情: <span id="detailName"></span></h2>
+
+            <div class="tabs">
+                <div class="tab active" onclick="showTab('templates')">邮件模板</div>
+                <div class="tab" onclick="showTab('leads')">收件人</div>
+                <div class="tab" onclick="showTab('stats')">数据统计</div>
+                <div class="tab" onclick="showTab('launch')">发送设置</div>
+            </div>
+
+            <div id="tab-templates">
+                <h3 style="margin:15px 0">添加邮件模板</h3>
+                <label>步骤序号</label>
+                <input type="number" id="tplStep" value="1" min="1">
+                <label>邮件主题 (支持变量如 {{first_name}})</label>
+                <input type="text" id="tplSubject" placeholder="Hi {{first_name}}, quick question">
+                <label>邮件内容 (HTML格式)</label>
+                <textarea id="tplBody" placeholder="<p>Hi {{first_name}},</p><p>I noticed...</p>"></textarea>
+                <label>等待天数 (发送此步骤前等待)</label>
+                <input type="number" id="tplDelay" value="0" min="0">
+                <button onclick="addTemplate()">添加模板</button>
+                <p class="help">变量默认值: {{name|there}} - 如果name为空则显示there</p>
+
+                <h3 style="margin:20px 0 10px">已添加模板</h3>
+                <div id="templateList"></div>
+            </div>
+
+            <div id="tab-leads" style="display:none">
+                <div class="grid">
+                    <div>
+                        <h3 style="margin:15px 0">手动添加</h3>
+                        <input type="email" id="manualEmail" placeholder="邮箱 *">
+                        <input type="text" id="manualFirstName" placeholder="first_name">
+                        <input type="text" id="manualLastName" placeholder="last_name">
+                        <input type="text" id="manualCompany" placeholder="company">
+                        <button onclick="addManualLead()">添加</button>
+                    </div>
+                    <div>
+                        <h3 style="margin:15px 0">上传文件</h3>
+                        <input type="file" id="leadsFile" accept=".csv,.xlsx,.xls">
+                        <button onclick="uploadLeads()">上传CSV/Excel</button>
+                    </div>
+                </div>
+
+                <h3 style="margin:20px 0 10px">批量粘贴</h3>
+                <p class="help">从Excel复制粘贴，第一行为表头，用Tab分隔。必须包含email列。</p>
+                <textarea id="pasteArea" placeholder="email	first_name	company
+john@example.com	John	Acme Inc
+jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></textarea>
+                <button onclick="parsePastedData()">解析粘贴数据</button>
+
+                <h3 style="margin:20px 0 10px">收件人列表 <span id="leadsCount" style="font-weight:normal;color:#888"></span></h3>
+                <table>
+                    <thead><tr><th>Email</th><th>状态</th><th>当前步骤</th><th>已打开</th><th>已点击</th><th>已回复</th><th>操作</th></tr></thead>
+                    <tbody id="leadsList"></tbody>
+                </table>
+            </div>
+
+            <div id="tab-stats" style="display:none">
+                <button onclick="loadStats()" style="margin-bottom:15px">刷新统计</button>
+                <button onclick="checkRepliesNow()" style="margin-bottom:15px;margin-left:10px">立即检查回复</button>
+                <div class="stats" id="statsBox"></div>
+            </div>
+
+            <div id="tab-launch" style="display:none">
+                <h3 style="margin:15px 0">发送设置</h3>
+                <label>发件账号</label>
+                <select id="sendAccount"></select>
+                <label>发送间隔 (分钟)</label>
+                <input type="number" id="sendInterval" value="5" min="1">
+                <button onclick="launchCampaign()">启动发送</button>
+                <button class="danger" onclick="stopCampaign()">暂停</button>
+            </div>
+        </div>
+
+        <div id="previewModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);padding:50px">
+            <div style="background:white;max-width:600px;margin:0 auto;padding:20px;border-radius:8px;max-height:80vh;overflow:auto">
+                <h3>邮件预览</h3>
+                <div id="preview"></div>
+                <button onclick="document.getElementById('previewModal').style.display='none'" style="margin-top:15px">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentCampaign = null;
+
+        async function api(url, opts = {}) {
+            const res = await fetch(url, opts);
+            return res.json();
+        }
+
+        async function loadAccounts() {
+            const accounts = await api('/api/accounts');
+            document.getElementById('accounts').innerHTML = accounts.length
+                ? accounts.map(a => `<div style="margin-bottom:8px">${a.email}</div>`).join('')
+                : '<p style="color:#888">暂无绑定账号</p>';
+            const select = document.getElementById('sendAccount');
+            select.innerHTML = accounts.map(a => `<option value="${a.email}">${a.email}</option>`).join('');
+        }
+
+        async function loadCampaigns() {
+            const campaigns = await api('/api/campaigns');
+            document.getElementById('campaigns').innerHTML = campaigns.map(c => `
+                <tr>
+                    <td>${c.id}</td>
+                    <td>${c.name}</td>
+                    <td><span class="status ${c.status}">${c.status}</span></td>
+                    <td><button class="btn-sm" onclick="openCampaign(${c.id}, '${c.name}')">管理</button></td>
+                </tr>
+            `).join('');
+        }
+
+        async function createCampaign() {
+            const name = document.getElementById('campaignName').value;
+            if (!name) return alert('请输入名称');
+            const fd = new FormData();
+            fd.append('name', name);
+            await api('/api/campaigns', { method: 'POST', body: fd });
+            document.getElementById('campaignName').value = '';
+            loadCampaigns();
+        }
+
+        async function openCampaign(id, name) {
+            currentCampaign = id;
+            document.getElementById('detailName').textContent = name;
+            document.getElementById('campaignDetail').style.display = 'block';
+            showTab('templates');
+            loadTemplates();
+            loadLeads();
+            loadStats();
+            loadCampaignSettings();
+        }
+
+        async function loadCampaignSettings() {
+            const campaign = await api(`/api/campaigns/${currentCampaign}`);
+            if (campaign.account_email) {
+                document.getElementById('sendAccount').value = campaign.account_email;
+            }
+            if (campaign.interval_minutes) {
+                document.getElementById('sendInterval').value = campaign.interval_minutes;
+            }
+        }
+
+        function showTab(name) {
+            document.querySelectorAll('[id^="tab-"]').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + name).style.display = 'block';
+            event.target.classList.add('active');
+        }
+
+        async function addTemplate() {
+            const fd = new FormData();
+            fd.append('step', document.getElementById('tplStep').value);
+            fd.append('subject', document.getElementById('tplSubject').value);
+            fd.append('body', document.getElementById('tplBody').value);
+            fd.append('delay_days', document.getElementById('tplDelay').value);
+            await api(`/api/campaigns/${currentCampaign}/templates`, { method: 'POST', body: fd });
+            loadTemplates();
+        }
+
+        async function loadTemplates() {
+            const templates = await api(`/api/campaigns/${currentCampaign}/templates`);
+            document.getElementById('templateList').innerHTML = templates.map(t => `
+                <div style="background:#f8f9fa;padding:10px;margin-bottom:10px;border-radius:4px">
+                    <strong>Step ${t.step}</strong> (等待${t.delay_days}天) <br>
+                    主题: ${t.subject}<br>
+                    <small style="color:#666">${t.body.substring(0, 100)}...</small>
+                </div>
+            `).join('') || '<p style="color:#888">暂无模板</p>';
+        }
+
+        async function uploadLeads() {
+            const file = document.getElementById('leadsFile').files[0];
+            if (!file) return alert('请选择文件');
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await api(`/api/campaigns/${currentCampaign}/leads`, { method: 'POST', body: fd });
+            alert(`导入成功: ${res.added}条, 跳过: ${res.skipped}条`);
+            loadLeads();
+        }
+
+        async function loadLeads() {
+            const leads = await api(`/api/campaigns/${currentCampaign}/leads`);
+            document.getElementById('leadsCount').textContent = `(${leads.length}人)`;
+            document.getElementById('leadsList').innerHTML = leads.map(l => `
+                <tr>
+                    <td>${l.email}</td>
+                    <td><span class="status ${l.status}">${l.status}</span></td>
+                    <td>${l.current_step}</td>
+                    <td>${l.opened ? 'Yes' : '<a href="#" onclick="markLead(${l.id},\'opened\');return false">标记</a>'}</td>
+                    <td>${l.clicked ? 'Yes' : '<a href="#" onclick="markLead(${l.id},\'clicked\');return false">标记</a>'}</td>
+                    <td>${l.replied ? '<span class="status replied">已回复</span>' : '<a href="#" onclick="markLead(${l.id},\'replied\');return false">标记</a>'}</td>
+                    <td><button class="btn-sm" onclick="previewEmail(${l.id})">预览</button></td>
+                </tr>
+            `).join('') || '<tr><td colspan="7" style="color:#888">暂无收件人</td></tr>';
+        }
+
+        async function addManualLead() {
+            const email = document.getElementById('manualEmail').value.trim();
+            if (!email) return alert('请输入邮箱');
+            const data = [{
+                email,
+                first_name: document.getElementById('manualFirstName').value.trim(),
+                last_name: document.getElementById('manualLastName').value.trim(),
+                company: document.getElementById('manualCompany').value.trim()
+            }];
+            const res = await fetch(`/api/campaigns/${currentCampaign}/leads/json`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).then(r => r.json());
+            if (res.added > 0) {
+                document.getElementById('manualEmail').value = '';
+                document.getElementById('manualFirstName').value = '';
+                document.getElementById('manualLastName').value = '';
+                document.getElementById('manualCompany').value = '';
+                loadLeads();
+            } else {
+                const errMsg = res.errors && res.errors.length > 0 ? res.errors.join('\n') : '未知错误';
+                alert('添加失败:\n' + errMsg);
+            }
+        }
+
+        async function parsePastedData() {
+            const text = document.getElementById('pasteArea').value.trim();
+            if (!text) return alert('请粘贴数据');
+
+            const lines = text.split('\n').filter(l => l.trim());
+            if (lines.length < 2) return alert('至少需要表头+1行数据');
+
+            // 解析表头（支持Tab或逗号分隔）
+            const delimiter = lines[0].includes('\t') ? '\t' : ',';
+            const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
+
+            if (!headers.includes('email')) return alert('必须包含email列');
+
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(delimiter);
+                const row = {};
+                headers.forEach((h, idx) => row[h] = (values[idx] || '').trim());
+                if (row.email) data.push(row);
+            }
+
+            if (data.length === 0) return alert('没有有效数据');
+
+            const res = await fetch(`/api/campaigns/${currentCampaign}/leads/json`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).then(r => r.json());
+
+            let msg = `导入成功: ${res.added}条, 跳过: ${res.skipped}条`;
+            if (res.errors && res.errors.length > 0) {
+                msg += '\n\n跳过原因:\n' + res.errors.join('\n');
+            }
+            alert(msg);
+            if (res.added > 0) document.getElementById('pasteArea').value = '';
+            loadLeads();
+        }
+
+        async function previewEmail(leadId) {
+            const res = await api(`/api/campaigns/${currentCampaign}/preview?lead_id=${leadId}&step=1`);
+            document.getElementById('preview').innerHTML = `<p><strong>主题:</strong> ${res.subject}</p><hr>${res.body}`;
+            document.getElementById('previewModal').style.display = 'block';
+        }
+
+        async function markLead(leadId, field) {
+            await api(`/api/leads/${leadId}/mark?field=${field}`, { method: 'POST' });
+            loadLeads();
+            loadStats();
+        }
+
+        async function loadStats() {
+            const stats = await api(`/api/campaigns/${currentCampaign}/stats`);
+            const openRate = stats.total ? ((stats.opens / stats.total) * 100).toFixed(1) : 0;
+            const clickRate = stats.total ? ((stats.clicks / stats.total) * 100).toFixed(1) : 0;
+            const replyRate = stats.total ? ((stats.replies / stats.total) * 100).toFixed(1) : 0;
+            document.getElementById('statsBox').innerHTML = `
+                <div class="stat"><div class="num">${stats.total || 0}</div><div class="label">总收件人</div></div>
+                <div class="stat"><div class="num">${stats.sent || 0}</div><div class="label">已发送</div></div>
+                <div class="stat"><div class="num">${stats.opens || 0}</div><div class="label">已打开</div></div>
+                <div class="stat"><div class="num">${openRate}%</div><div class="label">打开率</div></div>
+                <div class="stat"><div class="num">${stats.clicks || 0}</div><div class="label">已点击</div></div>
+                <div class="stat"><div class="num">${clickRate}%</div><div class="label">点击率</div></div>
+                <div class="stat"><div class="num">${stats.replies || 0}</div><div class="label">已回复</div></div>
+                <div class="stat"><div class="num">${replyRate}%</div><div class="label">回复率</div></div>
+            `;
+        }
+
+        async function checkRepliesNow() {
+            const res = await api(`/api/campaigns/${currentCampaign}/check-replies`, { method: 'POST' });
+            alert(res.msg || '检查完成');
+            loadStats();
+            loadLeads();
+        }
+
+        async function launchCampaign() {
+            const fd = new FormData();
+            fd.append('account_email', document.getElementById('sendAccount').value);
+            fd.append('interval_minutes', document.getElementById('sendInterval').value);
+            const res = await api(`/api/campaigns/${currentCampaign}/launch`, { method: 'POST', body: fd });
+            alert(res.msg || '已启动');
+            loadCampaigns();
+        }
+
+        async function stopCampaign() {
+            await api(`/api/campaigns/${currentCampaign}/stop`, { method: 'POST' });
+            alert('已暂停');
+            loadCampaigns();
+        }
+
+        // 初始化
+        loadAccounts();
+        loadCampaigns();
+
+        // URL消息提示
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('msg')) {
+            document.getElementById('msg').innerHTML = `<div class="msg">${urlParams.get('msg')}</div>`;
+        }
+    </script>
+</body>
+</html>
