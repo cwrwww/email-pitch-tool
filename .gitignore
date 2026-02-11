@@ -13,3 +13,11 @@ venv/
 # IDE
 .vscode/
 .idea/
+
+# Test files
+test_*.py
+test_*.html
+nul
+
+# Railway
+.railway

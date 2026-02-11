@@ -31,68 +31,132 @@ scheduler.start()
 DB_PATH = "data.db"
 CREDENTIALS_FILE = "credentials.json"  # 从Google Cloud Console下载
 SCOPES = ['https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.readonly']
-REDIRECT_URI = "http://localhost:8000/oauth/callback"
+# 支持环境变量配置REDIRECT_URI（部署时使用）
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
+REDIRECT_URI = f"{BASE_URL}/oauth/callback"
 TEST_MODE = os.environ.get("TEST_MODE", "false").lower() == "true"  # 测试模式不发真邮件
 
 # 数据库初始化
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGER PRIMARY KEY, email TEXT UNIQUE, token TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS campaigns (
-                id INTEGER PRIMARY KEY, name TEXT, status TEXT DEFAULT 'draft',
-                account_email TEXT, interval_minutes INTEGER DEFAULT 5,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS templates (
-                id INTEGER PRIMARY KEY, campaign_id INTEGER, step INTEGER, subject TEXT, body TEXT,
-                delay_days INTEGER DEFAULT 0, FOREIGN KEY(campaign_id) REFERENCES campaigns(id)
-            );
-            CREATE TABLE IF NOT EXISTS leads (
-                id INTEGER PRIMARY KEY, campaign_id INTEGER, email TEXT, data TEXT,
-                status TEXT DEFAULT 'pending', current_step INTEGER DEFAULT 1,
-                last_sent_at TIMESTAMP, opened INTEGER DEFAULT 0, clicked INTEGER DEFAULT 0, replied INTEGER DEFAULT 0,
-                FOREIGN KEY(campaign_id) REFERENCES campaigns(id)
-            );
-            CREATE TABLE IF NOT EXISTS blacklist (email TEXT PRIMARY KEY);
-        """)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    # 启用WAL模式以提高并发性能
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")  # 30秒超时
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS accounts (
+            id INTEGER PRIMARY KEY, email TEXT UNIQUE, token TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS campaigns (
+            id INTEGER PRIMARY KEY, name TEXT, status TEXT DEFAULT 'draft',
+            account_email TEXT, interval_minutes INTEGER DEFAULT 5,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS templates (
+            id INTEGER PRIMARY KEY, campaign_id INTEGER, step INTEGER, subject TEXT, body TEXT,
+            delay_days INTEGER DEFAULT 0, FOREIGN KEY(campaign_id) REFERENCES campaigns(id)
+        );
+        CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY, campaign_id INTEGER, email TEXT, data TEXT,
+            status TEXT DEFAULT 'pending', current_step INTEGER DEFAULT 1,
+            last_sent_at TIMESTAMP, opened INTEGER DEFAULT 0, clicked INTEGER DEFAULT 0, replied INTEGER DEFAULT 0,
+            FOREIGN KEY(campaign_id) REFERENCES campaigns(id)
+        );
+        CREATE TABLE IF NOT EXISTS blacklist (email TEXT PRIMARY KEY);
+    """)
+    conn.commit()
+    conn.close()
 init_db()
+
+def check_all_replies():
+    """定期检查所有campaign的回复"""
+    try:
+        with get_db() as conn:
+            campaigns = conn.execute(
+                "SELECT DISTINCT c.id, c.account_email FROM campaigns c "
+                "JOIN leads l ON c.id = l.campaign_id "
+                "WHERE c.account_email IS NOT NULL AND l.replied = 0"
+            ).fetchall()
+
+        # 释放数据库连接后再逐个检查
+        for campaign in campaigns:
+            try:
+                check_replies(campaign['id'], campaign['account_email'])
+            except Exception as e:
+                print(f"[Check replies error for campaign {campaign['id']}] {e}")
+    except Exception as e:
+        print(f"[Check all replies error] {e}")
 
 def restore_running_campaigns():
     """启动时恢复所有运行中的campaigns"""
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
+    with get_db() as conn:
         rows = conn.execute("SELECT id, account_email, interval_minutes FROM campaigns WHERE status='running'").fetchall()
-        for row in rows:
-            if row['account_email']:
-                scheduler.add_job(process_campaign, 'interval', minutes=row['interval_minutes'] or 5,
-                                  args=[row['id'], row['account_email']], id=f"campaign_{row['id']}", replace_existing=True)
-                print(f"[Restored] Campaign {row['id']} with interval {row['interval_minutes']}min")
+
+    for row in rows:
+        if row['account_email']:
+            scheduler.add_job(process_campaign, 'interval', minutes=row['interval_minutes'] or 5,
+                              args=[row['id'], row['account_email']], id=f"campaign_{row['id']}", replace_existing=True)
+            print(f"[Restored] Campaign {row['id']} with interval {row['interval_minutes']}min")
+
+    # 添加定期回复检查任务（每10分钟检查一次所有campaign）
+    scheduler.add_job(check_all_replies, 'interval', minutes=10, id='check_all_replies', replace_existing=True)
+    print("[Scheduled] Reply checker every 10 minutes")
 
 # 延迟恢复，等scheduler启动完成
 scheduler.add_job(restore_running_campaigns, 'date', id='restore_on_start')
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout=30000")  # 30秒超时
     conn.row_factory = sqlite3.Row
-    try: yield conn
-    finally: conn.close()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 # Gmail OAuth
 @app.get("/oauth/start")
 def oauth_start():
-    if not Path(CREDENTIALS_FILE).exists():
-        return {"error": "请先下载credentials.json到项目根目录"}
-    flow = Flow.from_client_secrets_file(CREDENTIALS_FILE, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    # 支持环境变量配置（用于云端部署）
+    if os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"):
+        client_config = {
+            "web": {
+                "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+                "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [REDIRECT_URI]
+            }
+        }
+        flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    elif Path(CREDENTIALS_FILE).exists():
+        flow = Flow.from_client_secrets_file(CREDENTIALS_FILE, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    else:
+        return {"error": "请先配置 Google OAuth 凭据（credentials.json 或环境变量）"}
+
     auth_url, _ = flow.authorization_url(prompt='consent')
     return RedirectResponse(auth_url)
 
 @app.get("/oauth/callback")
 def oauth_callback(code: str):
-    flow = Flow.from_client_secrets_file(CREDENTIALS_FILE, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    # 使用动态REDIRECT_URI
+    redirect_uri = f"{BASE_URL}/oauth/callback"
+
+    # 支持环境变量配置
+    if os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"):
+        client_config = {
+            "web": {
+                "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+                "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [redirect_uri]
+            }
+        }
+        flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri)
+    else:
+        flow = Flow.from_client_secrets_file(CREDENTIALS_FILE, scopes=SCOPES, redirect_uri=redirect_uri)
+
     flow.fetch_token(code=code)
     creds = flow.credentials
     service = build('gmail', 'v1', credentials=creds)
@@ -316,51 +380,64 @@ def check_replies(cid: int, account_email: str):
         print(f"[TEST MODE] Skipping reply check for campaign {cid}")
         return
 
-    with get_db() as conn:
-        row = conn.execute("SELECT token FROM accounts WHERE email=?", (account_email,)).fetchone()
-        if not row: return
+    try:
+        # 首先获取认证信息和leads列表（快速查询，避免长时间持有连接）
+        with get_db() as conn:
+            row = conn.execute("SELECT token FROM accounts WHERE email=?", (account_email,)).fetchone()
+            if not row:
+                return
 
-        # 获取该campaign所有待处理的lead邮箱
-        leads = conn.execute(
-            "SELECT id, email FROM leads WHERE campaign_id=? AND replied=0 AND status='pending'", (cid,)
-        ).fetchall()
-        if not leads: return
+            token_json = row['token']
 
+            # 获取该campaign所有未回复的lead邮箱（不限制status）
+            leads = conn.execute(
+                "SELECT id, email FROM leads WHERE campaign_id=? AND replied=0", (cid,)
+            ).fetchall()
+            if not leads:
+                return
+
+        # 释放数据库连接后再进行Gmail API调用（耗时操作）
         lead_emails = {l['email'].lower(): l['id'] for l in leads}
 
-        try:
-            creds = Credentials.from_authorized_user_info(json.loads(row['token']))
-            service = build('gmail', 'v1', credentials=creds)
+        creds = Credentials.from_authorized_user_info(json.loads(token_json))
+        service = build('gmail', 'v1', credentials=creds)
 
-            # 查询最近7天的收件邮件
-            results = service.users().messages().list(
-                userId='me', q='in:inbox newer_than:7d', maxResults=100
+        # 查询最近7天的收件邮件
+        results = service.users().messages().list(
+            userId='me', q='in:inbox newer_than:7d', maxResults=100
+        ).execute()
+
+        messages = results.get('messages', [])
+        replied_lead_ids = []
+
+        for msg in messages:
+            msg_detail = service.users().messages().get(
+                userId='me', id=msg['id'], format='metadata',
+                metadataHeaders=['From']
             ).execute()
 
-            messages = results.get('messages', [])
-            for msg in messages:
-                msg_detail = service.users().messages().get(
-                    userId='me', id=msg['id'], format='metadata',
-                    metadataHeaders=['From']
-                ).execute()
+            headers = msg_detail.get('payload', {}).get('headers', [])
+            from_header = next((h['value'] for h in headers if h['name'] == 'From'), '')
 
-                headers = msg_detail.get('payload', {}).get('headers', [])
-                from_header = next((h['value'] for h in headers if h['name'] == 'From'), '')
+            # 提取发件人邮箱
+            import re
+            match = re.search(r'<(.+?)>', from_header)
+            sender = (match.group(1) if match else from_header).lower().strip()
 
-                # 提取发件人邮箱
-                import re
-                match = re.search(r'<(.+?)>', from_header)
-                sender = (match.group(1) if match else from_header).lower().strip()
+            # 如果发件人在我们的leads列表中，收集起来
+            if sender in lead_emails:
+                replied_lead_ids.append((lead_emails[sender], sender))
 
-                # 如果发件人在我们的leads列表中，标记为已回复
-                if sender in lead_emails:
-                    lead_id = lead_emails[sender]
+        # 批量更新数据库（一次性提交，减少锁定时间）
+        if replied_lead_ids:
+            with get_db() as conn:
+                for lead_id, sender in replied_lead_ids:
                     conn.execute("UPDATE leads SET replied=1, status='replied' WHERE id=?", (lead_id,))
                     print(f"[Reply detected] Lead {lead_id} ({sender}) replied")
+                conn.commit()
 
-            conn.commit()
-        except Exception as e:
-            print(f"[Check replies error] {e}")
+    except Exception as e:
+        print(f"[Check replies error] {e}")
 
 def process_campaign(cid: int, account_email: str):
     # 先检查回复
@@ -386,8 +463,9 @@ def process_campaign(cid: int, account_email: str):
         subject = Template(tpl['subject']).render(**data)
         body = Template(tpl['body']).render(**data)
 
-        # 添加追踪像素
-        track_pixel = f'<img src="http://localhost:8000/track/open/{lead["id"]}" width="1" height="1">'
+        # 添加追踪像素（使用环境变量配置域名）
+        base_url = os.environ.get("BASE_URL", "http://localhost:8000")
+        track_pixel = f'<img src="{base_url}/track/open/{lead["id"]}" width="1" height="1" style="display:none">'
         body += track_pixel
 
         if send_gmail(account_email, lead['email'], subject, body):
@@ -400,10 +478,23 @@ def process_campaign(cid: int, account_email: str):
 
 # 追踪
 @app.get("/track/open/{lead_id}")
-def track_open(lead_id: int):
+def track_open(lead_id: int, request: Request):
+    """追踪邮件打开"""
+    # 记录日志（包含IP和User-Agent）
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    print(f"[Open tracked] Lead {lead_id} | IP: {client_ip} | UA: {user_agent[:50]}...")
+
     with get_db() as conn:
-        conn.execute("UPDATE leads SET opened=1 WHERE id=?", (lead_id,))
-        conn.commit()
+        # 检查lead是否存在
+        lead = conn.execute("SELECT id, email FROM leads WHERE id=?", (lead_id,)).fetchone()
+        if lead:
+            conn.execute("UPDATE leads SET opened=1 WHERE id=?", (lead_id,))
+            conn.commit()
+            print(f"[Open tracked] ✓ Lead {lead_id} ({lead['email']}) marked as opened")
+        else:
+            print(f"[Open tracked] ✗ Lead {lead_id} not found")
+
     # 返回1x1透明GIF
     gif = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
     return HTMLResponse(content=gif, media_type="image/gif")
@@ -468,4 +559,5 @@ def index():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
