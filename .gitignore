@@ -1,23 +1,32 @@
 # Database
 *.db
+*.db-shm
+*.db-wal
 
-# Credentials
+# Credentials & Tokens
 credentials.json
+token.json
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
 .env
 venv/
+.venv/
+*.egg-info/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Test files
 test_*.py
 test_*.html
 nul
 
-# Railway
-.railway
+# OS
+.DS_Store
+Thumbs.db

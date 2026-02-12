@@ -463,9 +463,18 @@ def process_campaign(cid: int, account_email: str):
         subject = Template(tpl['subject']).render(**data)
         body = Template(tpl['body']).render(**data)
 
-        # 添加追踪像素（使用环境变量配置域名）
-        base_url = os.environ.get("BASE_URL", "http://localhost:8000")
-        track_pixel = f'<img src="{base_url}/track/open/{lead["id"]}" width="1" height="1" style="display:none">'
+        # 添加追踪像素
+        # 支持两种追踪服务：
+        # 1. 使用Render上的tracker.py: TRACKER_URL=https://your-tracker.onrender.com
+        # 2. 使用本地追踪服务: BASE_URL=http://your-vps-ip
+        tracker_url = os.environ.get("TRACKER_URL", "")
+        if tracker_url:
+            # 使用外部追踪服务（如Render上的tracker.py）
+            track_pixel = f'<img src="{tracker_url}/open?uid={lead["id"]}" width="1" height="1" style="display:none">'
+        else:
+            # 使用本地追踪服务
+            base_url = os.environ.get("BASE_URL", "http://localhost:8000")
+            track_pixel = f'<img src="{base_url}/track/open/{lead["id"]}" width="1" height="1" style="display:none">'
         body += track_pixel
 
         if send_gmail(account_email, lead['email'], subject, body):
@@ -551,6 +560,113 @@ def mark_lead(lead_id: int, field: str):
             conn.execute(f"UPDATE leads SET {field}=1 WHERE id=?", (lead_id,))
         conn.commit()
     return {"ok": True}
+
+# ============================================
+# 自动同步追踪数据（从Render tracker拉取）
+# ============================================
+
+def sync_tracker_data():
+    """
+    从Render追踪服务同步数据到本地数据库
+    每10分钟自动运行一次
+    """
+    import requests
+
+    tracker_url = os.environ.get("TRACKER_URL", "")
+
+    if not tracker_url or "your-tracker" in tracker_url:
+        # 未配置追踪URL，跳过同步
+        return
+
+    try:
+        # 获取未同步的打开记录
+        response = requests.get(f"{tracker_url}/api/opens", timeout=10)
+        if response.status_code != 200:
+            print(f"[Sync Warning] Tracker API returned {response.status_code}")
+            return
+
+        data = response.json()
+        opens = data.get("opens", [])
+
+        if not opens:
+            return
+
+        # 更新本地数据库
+        with get_db() as conn:
+            updated = 0
+            synced_ids = []
+
+            for record in opens:
+                uid = record['uid']
+                record_id = record['id']
+
+                try:
+                    # 检查lead是否存在且未标记打开
+                    lead = conn.execute(
+                        "SELECT opened FROM leads WHERE id=?",
+                        (uid,)
+                    ).fetchone()
+
+                    if lead and lead[0] == 0:
+                        conn.execute("UPDATE leads SET opened=1 WHERE id=?", (uid,))
+                        updated += 1
+
+                    synced_ids.append(record_id)
+
+                except Exception as e:
+                    print(f"[Sync Error] Lead {uid}: {e}")
+
+            conn.commit()
+
+        # 标记远程记录为已同步
+        if synced_ids:
+            try:
+                requests.post(
+                    f"{tracker_url}/api/mark_synced",
+                    json={"open_ids": synced_ids, "click_ids": []},
+                    timeout=5
+                )
+                print(f"[Sync] Updated {updated} opens, marked {len(synced_ids)} as synced")
+            except:
+                pass  # 忽略标记失败
+
+        # 同步点击记录
+        response = requests.get(f"{tracker_url}/api/clicks", timeout=10)
+        if response.status_code == 200:
+            clicks = response.json().get("clicks", [])
+            if clicks:
+                with get_db() as conn:
+                    click_ids = []
+                    for record in clicks:
+                        try:
+                            conn.execute("UPDATE leads SET clicked=1 WHERE id=?", (record['uid'],))
+                            click_ids.append(record['id'])
+                        except:
+                            pass
+                    conn.commit()
+
+                if click_ids:
+                    requests.post(
+                        f"{tracker_url}/api/mark_synced",
+                        json={"open_ids": [], "click_ids": click_ids},
+                        timeout=5
+                    )
+
+    except requests.exceptions.RequestException as e:
+        print(f"[Sync Error] {e}")
+    except Exception as e:
+        print(f"[Sync Error] Unexpected: {e}")
+
+# 添加自动同步任务（每10分钟）
+if os.environ.get("TRACKER_URL"):
+    scheduler.add_job(
+        sync_tracker_data,
+        'interval',
+        minutes=10,
+        id='sync_tracker',
+        replace_existing=True
+    )
+    print("[Scheduler] Tracker sync enabled (every 10 minutes)")
 
 # 前端页面
 @app.get("/", response_class=HTMLResponse)
