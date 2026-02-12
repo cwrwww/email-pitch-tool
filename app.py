@@ -389,15 +389,17 @@ def check_replies(cid: int, account_email: str):
 
             token_json = row['token']
 
-            # 获取该campaign所有未回复的lead邮箱（不限制status）
+            # 获取该campaign所有未回复的lead邮箱
+            # 重要：只检查已经发送过邮件的leads (last_sent_at IS NOT NULL)
             leads = conn.execute(
-                "SELECT id, email FROM leads WHERE campaign_id=? AND replied=0", (cid,)
+                "SELECT id, email, last_sent_at FROM leads WHERE campaign_id=? AND replied=0 AND last_sent_at IS NOT NULL", (cid,)
             ).fetchall()
             if not leads:
                 return
 
         # 释放数据库连接后再进行Gmail API调用（耗时操作）
-        lead_emails = {l['email'].lower(): l['id'] for l in leads}
+        # 存储 {email: (lead_id, last_sent_at)}
+        lead_emails = {l['email'].lower(): (l['id'], l['last_sent_at']) for l in leads}
 
         creds = Credentials.from_authorized_user_info(json.loads(token_json))
         service = build('gmail', 'v1', credentials=creds)
@@ -413,20 +415,40 @@ def check_replies(cid: int, account_email: str):
         for msg in messages:
             msg_detail = service.users().messages().get(
                 userId='me', id=msg['id'], format='metadata',
-                metadataHeaders=['From']
+                metadataHeaders=['From', 'Date']
             ).execute()
 
             headers = msg_detail.get('payload', {}).get('headers', [])
             from_header = next((h['value'] for h in headers if h['name'] == 'From'), '')
+            date_header = next((h['value'] for h in headers if h['name'] == 'Date'), '')
 
             # 提取发件人邮箱
             import re
             match = re.search(r'<(.+?)>', from_header)
             sender = (match.group(1) if match else from_header).lower().strip()
 
-            # 如果发件人在我们的leads列表中，收集起来
+            # 如果发件人在我们的leads列表中
             if sender in lead_emails:
-                replied_lead_ids.append((lead_emails[sender], sender))
+                lead_id, last_sent_at = lead_emails[sender]
+
+                # 获取邮件接收时间
+                try:
+                    from email.utils import parsedate_to_datetime
+                    received_time = parsedate_to_datetime(date_header)
+
+                    # 解析发送时间
+                    from dateutil import parser as dateparser
+                    sent_time = dateparser.parse(last_sent_at)
+
+                    # 只有邮件是在我们发送之后收到的，才算作回复
+                    if received_time > sent_time:
+                        replied_lead_ids.append((lead_id, sender))
+                        print(f"[Reply] {sender} replied (sent: {sent_time}, received: {received_time})")
+                    else:
+                        print(f"[Skip] {sender} email too old (sent: {sent_time}, received: {received_time})")
+                except Exception as e:
+                    print(f"[Date parse error] {e}, skipping message")
+                    continue
 
         # 批量更新数据库（一次性提交，减少锁定时间）
         if replied_lead_ids:
@@ -482,7 +504,7 @@ def process_campaign(cid: int, account_email: str):
                                    (cid, lead['current_step'] + 1)).fetchone()
             new_status = 'pending' if next_tpl else 'completed'
             conn.execute("UPDATE leads SET current_step=current_step+1, last_sent_at=?, status=? WHERE id=?",
-                        (datetime.now(), new_status, lead['id']))
+                        (datetime.now().isoformat(), new_status, lead['id']))
             conn.commit()
 
 # 追踪
