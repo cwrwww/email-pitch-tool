@@ -101,9 +101,6 @@ def restore_running_campaigns():
     scheduler.add_job(check_all_replies, 'interval', minutes=10, id='check_all_replies', replace_existing=True)
     print("[Scheduled] Reply checker every 10 minutes")
 
-# 延迟恢复，等scheduler启动完成
-scheduler.add_job(restore_running_campaigns, 'date', id='restore_on_start')
-
 @contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
@@ -694,6 +691,9 @@ if os.environ.get("TRACKER_URL"):
 @app.get("/", response_class=HTMLResponse)
 def index():
     return Path("index.html").read_text(encoding='utf-8')
+
+# 启动时恢复运行中的 campaigns（延迟执行，确保所有函数已定义）
+scheduler.add_job(restore_running_campaigns, 'date', id='restore_on_start')
 
 if __name__ == "__main__":
     import uvicorn
