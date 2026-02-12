@@ -460,6 +460,12 @@ def check_replies(cid: int, account_email: str):
                     from dateutil import parser as dateparser
                     sent_time = dateparser.parse(last_sent_at)
 
+                    # 统一转换为 naive datetime（移除时区信息）以便比较
+                    if received_time.tzinfo is not None:
+                        received_time = received_time.replace(tzinfo=None)
+                    if sent_time.tzinfo is not None:
+                        sent_time = sent_time.replace(tzinfo=None)
+
                     # 只有邮件是在我们发送之后收到的，才算作回复
                     if received_time > sent_time:
                         replied_lead_ids.append((lead_id, sender))
