@@ -203,7 +203,7 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
 
                 <h3 style="margin:20px 0 10px">收件人列表 <span id="leadsCount" style="font-weight:normal;color:#888"></span></h3>
                 <table>
-                    <thead><tr><th>Email</th><th>状态</th><th>当前步骤</th><th>已打开</th><th>已点击</th><th>已回复</th><th>操作</th></tr></thead>
+                    <thead><tr><th>Email</th><th>状态</th><th>当前步骤</th><th>最后发送</th><th>已打开</th><th>已点击</th><th>已回复</th><th>操作</th></tr></thead>
                     <tbody id="leadsList"></tbody>
                 </table>
             </div>
@@ -322,7 +322,10 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
                     <td>${c.id}</td>
                     <td>${c.name}</td>
                     <td><span class="status ${c.status}">${c.status}</span></td>
-                    <td><button class="btn-sm" onclick="openCampaign(${c.id}, '${c.name}')">管理</button></td>
+                    <td>
+                        <button class="btn-sm" onclick="openCampaign(${c.id}, '${c.name}')">管理</button>
+                        <button class="btn-sm danger" onclick="deleteCampaign(${c.id}, '${c.name}')" style="margin-left:8px">删除</button>
+                    </td>
                 </tr>
             `).join('');
         }
@@ -558,12 +561,13 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
                     <td>${l.email}</td>
                     <td><span class="status ${l.status}">${l.status}</span></td>
                     <td>${l.current_step}</td>
-                    <td>${l.opened ? 'Yes' : '<a href="#" onclick="markLead(${l.id},\'opened\');return false">标记</a>'}</td>
-                    <td>${l.clicked ? 'Yes' : '<a href="#" onclick="markLead(${l.id},\'clicked\');return false">标记</a>'}</td>
-                    <td>${l.replied ? '<span class="status replied">已回复</span>' : '<a href="#" onclick="markLead(${l.id},\'replied\');return false">标记</a>'}</td>
+                    <td style="font-size:12px;color:#666">${l.last_sent_at ? new Date(l.last_sent_at).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-'}</td>
+                    <td>${l.opened ? '✓' : '-'}</td>
+                    <td>${l.clicked ? '✓' : '-'}</td>
+                    <td>${l.replied ? '<span class="status replied">已回复</span>' : '-'}</td>
                     <td><button class="btn-sm" onclick="previewEmail(${l.id})">预览</button></td>
                 </tr>
-            `).join('') || '<tr><td colspan="7" style="color:#888">暂无收件人</td></tr>';
+            `).join('') || '<tr><td colspan="8" style="color:#888">暂无收件人</td></tr>';
         }
 
         async function addManualLead() {
@@ -694,6 +698,23 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
         async function stopCampaign() {
             await api(`/api/campaigns/${currentCampaign}/stop`, { method: 'POST' });
             toast('已暂停', 'info');
+            loadCampaigns();
+        }
+
+        async function deleteCampaign(id, name) {
+            if (!confirm(`确定要删除 Campaign "${name}" 吗？\n\n此操作将删除所有相关数据（收件人、模板等），且无法恢复。`)) {
+                return;
+            }
+
+            await api(`/api/campaigns/${id}`, { method: 'DELETE' });
+            toast('Campaign 已删除', 'success');
+
+            // 如果当前正在管理这个 campaign，返回主页
+            if (currentCampaign === id) {
+                document.getElementById('campaignManage').style.display = 'none';
+                document.getElementById('campaignList').style.display = 'block';
+            }
+
             loadCampaigns();
         }
 

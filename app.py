@@ -330,9 +330,14 @@ def launch_campaign(cid: int, account_email: str = Form(...), interval_minutes: 
         conn.execute("UPDATE campaigns SET status='running', account_email=?, interval_minutes=? WHERE id=?",
                     (account_email, interval_minutes, cid))
         conn.commit()
+
+    # 立即发送第一封邮件
+    process_campaign(cid, account_email)
+
+    # 添加定时任务继续发送后续邮件
     scheduler.add_job(process_campaign, 'interval', minutes=interval_minutes,
                       args=[cid, account_email], id=f"campaign_{cid}", replace_existing=True)
-    return {"ok": True, "msg": f"已启动，每{interval_minutes}分钟发送一封"}
+    return {"ok": True, "msg": f"已启动，立即发送第一封，之后每{interval_minutes}分钟发送一封"}
 
 @app.get("/api/campaigns/{cid}")
 def get_campaign(cid: int):
@@ -349,6 +354,24 @@ def stop_campaign(cid: int):
     try: scheduler.remove_job(f"campaign_{cid}")
     except: pass
     return {"ok": True}
+
+@app.delete("/api/campaigns/{cid}")
+def delete_campaign(cid: int):
+    """删除 campaign 及其所有相关数据"""
+    # 停止 scheduler job
+    try:
+        scheduler.remove_job(f"campaign_{cid}")
+    except:
+        pass
+
+    # 删除数据库记录
+    with get_db() as conn:
+        conn.execute("DELETE FROM leads WHERE campaign_id=?", (cid,))
+        conn.execute("DELETE FROM templates WHERE campaign_id=?", (cid,))
+        conn.execute("DELETE FROM campaigns WHERE id=?", (cid,))
+        conn.commit()
+
+    return {"ok": True, "msg": "Campaign 已删除"}
 
 def send_gmail(account_email: str, to: str, subject: str, body: str) -> bool:
     if TEST_MODE:
