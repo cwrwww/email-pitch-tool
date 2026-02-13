@@ -39,6 +39,21 @@
         .msg { padding: 10px; background: #d4edda; color: #155724; border-radius: 4px; margin-bottom: 15px; }
         #preview { background: #f8f9fa; padding: 15px; border-radius: 4px; margin-top: 10px; }
 
+        /* 预览容器内容限制 */
+        #previewBody * {
+            max-width: 100%;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        #previewBody img, #previewBody table, #previewBody pre {
+            max-width: 100% !important;
+            height: auto !important;
+        }
+        #previewBody table {
+            display: block;
+            overflow-x: auto;
+        }
+
         /* 抖动动画 */
         @keyframes shake {
             0%, 100% { transform: translateX(0); }
@@ -159,12 +174,12 @@
                     </div>
                     <div>
                         <label>实时预览 (示例数据)</label>
-                        <div style="background:#fff;border:1px solid #ddd;border-radius:4px;padding:15px;min-height:200px">
+                        <div style="background:#fff;border:1px solid #ddd;border-radius:4px;padding:15px;min-height:200px;max-height:500px;overflow:auto">
                             <div style="color:#666;font-size:12px;margin-bottom:10px">
                                 <strong>主题:</strong> <span id="previewSubject">-</span>
                             </div>
                             <hr style="border:none;border-top:1px solid #eee;margin:10px 0">
-                            <div id="previewBody" style="font-size:14px">输入内容后显示预览...</div>
+                            <div id="previewBody" style="font-size:14px;word-wrap:break-word;overflow-wrap:break-word">输入内容后显示预览...</div>
                         </div>
                         <p class="help" style="margin-top:10px">预览使用示例数据: first_name=John, company=Acme Inc, title=CEO</p>
                     </div>
@@ -457,12 +472,15 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
             updatePreview();
         }
 
+        let templatesCache = [];  // 缓存模板数据
+
         async function loadTemplates() {
             const templates = await api(`/api/campaigns/${currentCampaign}/templates`);
+            templatesCache = templates;  // 缓存数据供编辑使用
             document.getElementById('templateList').innerHTML = templates.map(t => `
                 <div style="background:#f8f9fa;padding:10px;margin-bottom:10px;border-radius:4px;position:relative">
                     <div style="position:absolute;right:10px;top:10px">
-                        <button class="btn-sm" onclick="editTemplate(${t.id}, ${t.step}, '${encodeURIComponent(t.subject)}', '${encodeURIComponent(t.body)}', ${t.delay_days})">编辑</button>
+                        <button class="btn-sm" onclick="editTemplate(${t.id})">编辑</button>
                         <button class="btn-sm danger" onclick="deleteTemplate(${t.id})">删除</button>
                     </div>
                     <strong>Step ${t.step}</strong> (等待${t.delay_days}天) <br>
@@ -483,12 +501,16 @@ jane@example.com	Jane	Tech Corp" style="min-height:150px;white-space:pre"></text
 
         let editingTemplateId = null;
 
-        function editTemplate(tid, step, subject, body, delay) {
+        function editTemplate(tid) {
+            // 从缓存中获取模板数据
+            const template = templatesCache.find(t => t.id === tid);
+            if (!template) return toast('模板不存在', 'error');
+
             editingTemplateId = tid;
-            document.getElementById('tplStep').value = step;
-            document.getElementById('tplSubject').value = decodeURIComponent(subject);
-            document.getElementById('tplBody').value = decodeURIComponent(body);
-            document.getElementById('tplDelay').value = delay;
+            document.getElementById('tplStep').value = template.step;
+            document.getElementById('tplSubject').value = template.subject;
+            document.getElementById('tplBody').value = template.body;
+            document.getElementById('tplDelay').value = template.delay_days;
             updatePreview();
 
             // 更改按钮
