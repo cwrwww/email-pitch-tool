@@ -86,15 +86,127 @@ export BASE_URL="https://your-app.com"
 
 **方式2: 使用 credentials.json（本地开发）**
 
-1. 访问 [Google Cloud Console](https://console.cloud.google.com/)
-2. 创建项目并启用 Gmail API
-3. 创建 OAuth 2.0 凭据
-4. 下载 `credentials.json` 到项目根目录
-5. 添加授权回调 URI：
-   - 本地：`http://localhost:8000/oauth/callback`
-   - 云端：`https://your-app.com/oauth/callback`
+#### 第一步：访问 Google Cloud Console
 
-**📖 详细步骤**: [原 README 中的详细步骤](docs/DEPLOYMENT.md#google-oauth-设置)
+1. 打开浏览器，访问 [Google Cloud Console](https://console.cloud.google.com/)
+2. 使用你的 Google 账号登录
+
+#### 第二步：创建新项目
+
+1. 点击顶部导航栏的项目下拉菜单
+2. 点击"新建项目"（New Project）
+3. 输入项目名称，例如 `email-pitch-tool`
+4. 点击"创建"（Create）
+5. 等待项目创建完成（约10-30秒）
+
+#### 第三步：启用 Gmail API
+
+1. 确保已选中刚创建的项目
+2. 在左侧菜单中，点击"API 和服务" > "启用的 API 和服务"
+3. 点击顶部的"+ 启用 API 和服务"按钮
+4. 在搜索框中输入 `Gmail API`
+5. 点击搜索结果中的 "Gmail API"
+6. 点击"启用"（Enable）按钮
+7. 等待 API 启用完成
+
+#### 第四步：配置 OAuth 同意屏幕
+
+1. 在左侧菜单中，点击"OAuth 同意屏幕"（OAuth consent screen）
+2. 选择用户类型：
+   - **外部**（External）：任何 Google 账号都可以授权
+   - **内部**（Internal）：仅限你的 Google Workspace 组织内的用户
+   - 推荐选择"外部"
+3. 点击"创建"
+4. 填写必填信息：
+   - **应用名称**：`Email Pitch Tool` 或其他名称
+   - **用户支持电子邮件**：选择你的邮箱
+   - **开发者联系信息**：填写你的邮箱
+5. 点击"保存并继续"
+6. 在"范围"（Scopes）页面，点击"保存并继续"（暂时不需要添加）
+7. 在"测试用户"页面，点击"+ ADD USERS"，添加你要用于测试的 Gmail 账号
+8. 点击"保存并继续"
+9. 检查摘要页面，点击"返回控制台"
+
+#### 第五步：创建 OAuth 2.0 凭据
+
+1. 在左侧菜单中，点击"凭据"（Credentials）
+2. 点击顶部的"+ 创建凭据"（Create Credentials）
+3. 选择"OAuth 客户端 ID"（OAuth client ID）
+4. 在"应用类型"中选择"桌面应用"（Desktop app）
+5. 输入名称，例如 `Email Pitch Desktop Client`
+6. 点击"创建"
+7. 弹出窗口会显示客户端 ID 和客户端密钥，点击"确定"
+
+#### 第六步：配置授权重定向 URI（重要！）
+
+1. 在凭据列表中，找到刚创建的 OAuth 2.0 客户端 ID
+2. 点击右侧的编辑图标（铅笔图标）
+3. 在"已获授权的重定向 URI"（Authorized redirect URIs）部分：
+   - 点击"+ 添加 URI"
+   - 本地开发添加：`http://localhost:8000/oauth/callback`
+   - 如需云端部署，再添加：`https://your-app.com/oauth/callback`（替换为你的实际域名）
+4. 点击底部的"保存"按钮
+
+#### 第七步：下载 credentials.json
+
+1. 返回"凭据"页面
+2. 找到你创建的 OAuth 2.0 客户端
+3. 点击右侧的下载图标（⬇️ 下载 JSON）
+4. 文件会被下载为类似 `client_secret_xxx.json` 的名称
+5. 将下载的文件重命名为 `credentials.json`
+6. 将文件移动到项目根目录（与 `app.py` 同级）
+
+#### 文件格式示例
+
+你的 `credentials.json` 文件应该类似这样：
+
+```json
+{
+  "installed": {
+    "client_id": "你的客户端ID.apps.googleusercontent.com",
+    "project_id": "你的项目ID",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_secret": "你的客户端密钥",
+    "redirect_uris": ["http://localhost"]
+  }
+}
+```
+
+#### 验证配置
+
+1. 确认文件路径：
+   ```
+   email-pitch-tool/
+   ├── app.py
+   ├── credentials.json  ← 应该在这里
+   └── ...
+   ```
+
+2. 运行应用：
+   ```bash
+   python app.py
+   ```
+
+3. 访问 `http://localhost:8000`，点击"绑定 Gmail 账号"
+4. 会跳转到 Google 授权页面
+5. 选择你的 Google 账号并授权
+6. 授权成功后会自动跳转回应用
+
+#### 常见问题
+
+**问题1: "redirect_uri_mismatch" 错误**
+- 原因：OAuth 客户端配置中的重定向 URI 与应用使用的不一致
+- 解决：确保 Google Console 中添加了 `http://localhost:8000/oauth/callback`
+
+**问题2: "access_denied" 错误**
+- 原因：应用处于测试模式，当前用户不在测试用户列表中
+- 解决：在 OAuth 同意屏幕的"测试用户"中添加该 Gmail 账号
+
+**问题3: credentials.json 找不到**
+- 原因：文件路径不正确或文件名拼写错误
+- 解决：确保文件名为 `credentials.json`（全小写）并放在项目根目录
 
 ---
 
